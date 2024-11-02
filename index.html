@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Multiplayer Game</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { background-color: #eee; display: block; }
+    #startScreen {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      padding: 20px;
+      border: 1px solid #000;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    #iconSelection img {
+      width: 100px;
+      height: 100px;
+      margin: 5px;
+      cursor: pointer;
+      border: 2px solid transparent;
+    }
+    #iconSelection img.selected {
+      border: 2px solid blue;
+    }
+  </style>
+</head>
+<body>
+  <div id="startScreen">
+    <h2>Enter Your Name</h2>
+    <input type="text" id="playerNameInput" placeholder="Player Name" />
+    <h3>Select an Icon</h3>
+    <div id="iconSelection">
+      <img src="hawktuah.png" alt="Icon 1" class="icon" data-icon="hawktuah.png" id="hawk">
+      <img src="troll.webp" alt="Icon 2" class="icon" data-icon="troll.webp" id="troll">
+      <img src="spongbob.png" alt="Icon 3" class="icon" data-icon="spongbob.png" id="spongbob">
+      <img src="stephen.jpeg" alt="Icon 2" class="icon" data-icon="stephen.jpeg" id="stephen">
+      <img src="daring.jpeg" alt="Icon 3" class="icon" data-icon="daring.jpeg" id="daring">
+      <!-- Add more icons as needed -->
+    </div>
+    <button id="startGameButton" disabled>Start Game</button>
+  </div>
+  <canvas id="gameCanvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const GRASS_HEIGHT = 100; // Height of the grass section
+
+    let playerName = "";
+    let playerIcon = "";
+    let playerIconHTML;
+    let myPlayerId = null; // Store the current player's ID
+    let gameStarted = false;
+    let cameraX = 0; // Camera position on the X-axis
+
+    class Player {
+      constructor(id, x, y, w, h, spritePath, name, opacity = 1) {
+        this.id = id; // Unique ID for each player
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+        this.speedX = 0;
+        this.speedY = 0;
+        this.gravity = 1; // Gravity strength
+        this.jumpSpeed = -15; // Jump speed
+        this.sprite = new Image();
+        this.sprite.src = spritePath;
+        this.loaded = false;
+        this.opacity = opacity; // Set opacity for players
+        this.name = name; // Player's name
+        this.onObject = false; // Track if the player is on a parkour object
+
+        this.sprite.onload = () => {
+          this.loaded = true;
+        };
+      }
+
+      draw() {
+        if (this.loaded) {
+          ctx.globalAlpha = this.opacity; // Set opacity for drawing
+          ctx.drawImage(this.sprite, this.x - cameraX, this.y, this.w, this.h);
+          ctx.globalAlpha = 1; // Reset opacity back to full
+
+          // Draw the player's name above the character
+          ctx.fillStyle = 'black';
+          ctx.font = '16px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText(this.name, this.x - cameraX + this.w / 2, this.y - 10); // Positioning the name above the player
+        }
+      }
+
+      update(parkourObjects) {
+        // Check horizontal collisions first
+        this.x += this.speedX; // Update horizontal position
+
+        // Handle collisions with parkour objects when moving horizontally
+        for (let obj of parkourObjects) {
+          if (this.collidesWith(obj)) {
+            if (this.speedX > 0) { // Moving right
+              this.x = obj.x - this.w; // Move player to the left of the object
+            } else if (this.speedX < 0) { // Moving left
+              this.x = obj.x + obj.w; // Move player to the right of the object
+            }
+          }
+        }
+
+        // Apply gravity
+        this.y += this.speedY; // Apply current vertical speed
+        this.speedY += this.gravity; // Apply gravity to vertical speed
+
+        // Ground check
+        if (this.y + this.h >= canvas.height - GRASS_HEIGHT) {
+          this.y = canvas.height - this.h - GRASS_HEIGHT; // Position on the grass
+          this.speedY = 0; // Reset vertical speed
+          this.onObject = false; // Reset onObject flag
+        }
+
+        // Reset onObject flag before checking collisions
+        this.onObject = false;
+
+        // Check collision with parkour objects
+        for (let obj of parkourObjects) {
+          if (this.collidesWith(obj)) {
+            // Collision response for falling onto an object
+            if (this.speedY > 0 && this.y + this.h <= obj.y + obj.h) {
+              this.y = obj.y - this.h; // Position on top of the object
+              this.speedY = 0; // Reset vertical speed
+              this.onObject = true; // Set onObject to true
+            }
+            // Stop upward movement if colliding with the bottom of the parkour object
+            if (this.speedY < 0 && this.y <= obj.y + obj.h && this.y + this.h > obj.y) {
+              this.y = obj.y + obj.h; // Position just below the object
+              this.speedY = 0; // Stop vertical movement
+            }
+          }
+        }
+
+        this.draw();
+      }
+
+      collidesWith(obj) {
+        return this.x < obj.x + obj.w &&
+               this.x + this.w > obj.x &&
+               this.y < obj.y + obj.h &&
+               this.y + this.h > obj.y;
+      }
+
+      jump() {
+        // Allow jumping if on the ground or on top of any parkour object
+        const onGround = this.y + this.h >= canvas.height - GRASS_HEIGHT; // Check if on ground (grass)
+
+        // Allow jump if on the ground or on a parkour object
+        if (onGround || this.onObject) {
+          this.speedY = this.jumpSpeed; // Set the jump speed
+        }
+      }
+    }
+
+    class ParkourObject {
+      constructor(x, y, w, h, color) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+        this.color = color;
+      }
+
+      draw() {
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x - cameraX, this.y, this.w, this.h); // Adjust for camera
+      }
+    }
+
+    class Controller {
+      constructor(playerId) {
+        this.playerId = playerId;
+        this.up = false;
+        this.right = false;
+        this.left = false;
+
+        let keyEvent = (e) => {
+          if (this.playerId === myPlayerId) { // Only respond to keys for this player
+            if (e.code === "KeyW" || e.code === "ArrowUp") { this.up = e.type === 'keydown'; }
+            if (e.code === "KeyD" || e.code === "ArrowRight") { this.right = e.type === 'keydown'; }
+            if (e.code === "KeyA" || e.code === "ArrowLeft") { this.left = e.type === 'keydown'; }
+          }
+        };
+
+        addEventListener('keydown', keyEvent);
+        addEventListener('keyup', keyEvent);
+      }
+    }
+
+    // Create parkour objects
+    const parkourObjects = [
+      new ParkourObject(200, canvas.height - GRASS_HEIGHT - 100, 100, 20, 'brown'), // Parkour box 1
+      new ParkourObject(400, canvas.height - GRASS_HEIGHT - 50, 100, 20, 'brown'), // Parkour box 2
+      new ParkourObject(600, canvas.height - GRASS_HEIGHT - 150, 100, 20, 'brown'),
+      new ParkourObject(800, canvas.height - GRASS_HEIGHT - 200, 100, 20, 'brown'),
+      new ParkourObject(1000, canvas.height - GRASS_HEIGHT - 250, 100, 20, 'brown'),
+      new ParkourObject(1200, canvas.height - GRASS_HEIGHT - 300, 100, 20, 'brown'),
+      new ParkourObject(1400, canvas.height - GRASS_HEIGHT - 350, 100, 20, 'brown')
+
+    ];
+
+    // Initialize controllers for each player
+    const controllers = {};
+
+    // WebSocket connection
+    const socket = new WebSocket('ws://localhost:8080');
+
+    socket.addEventListener('open', () => {
+      console.log('WebSocket connection established');
+    });
+
+    // Listen for messages
+    const players = {};
+
+// Handle incoming messages from the server
+socket.onmessage = (event) => {
+  event.data.text().then((text) => {
+    const data = JSON.parse(text);
+    //console.log(`Received message of type: ${data.type}`);
+
+    if (data.type === 'positionUpdate') {
+      // Update player positions
+      if (!players[data.id]) {
+        players[data.id] = new Player(data.id, 50, canvas.height - GRASS_HEIGHT - 150, 75, 75, data.icon, data.name, 0.5);
+        controllers[data.id] = new Controller(data.id); // Create a controller for this player
+        console.log(`Added new player: ${data.id}`);
+      }
+      // Update the specific player's position
+      players[data.id].x = data.x;
+      players[data.id].y = data.y;
+      //console.log(`Player ${data.id} position updated to: (${data.x}, ${data.y})`);
+
+    } else if (data.type === 'playerConnected') {
+      if (!players[data.id]) {
+        players[data.id] = new Player(data.id, data.x, data.y, 75, 75, data.icon, data.name);
+        controllers[data.id] = new Controller(data.id);
+        console.log(`Player connected: ${data.id}`);
+      }
+
+    } else if (data.type === 'allPlayers') {
+      console.log(`Received all players data:`, data.players);
+      for (const id in data.players) {
+        const playerData = data.players[id];
+        if (!players[id]) {
+          players[id] = new Player(playerData.id, playerData.x, playerData.y, 75, 75, playerData.icon, playerData.name);
+          controllers[id] = new Controller(playerData.id);
+          console.log(`Added existing player: ${playerData.id}`);
+        }
+      }
+
+    } else if (data.type === 'playerDisconnected') {
+      delete players[data.id];
+      delete controllers[data.id];
+      console.log(`Player disconnected: ${data.id}`);
+    }
+  }).catch((error) => {
+    console.error('Error processing message:', error);
+  });
+};
+
+
+
+
+    // Icon selection event
+    const icons = document.querySelectorAll('.icon');
+    icons.forEach(icon => {
+      icon.addEventListener('click', function() {
+        // Remove 'selected' class from all icons
+        icons.forEach(i => i.classList.remove('selected'));
+        // Add 'selected' class to the clicked icon
+        this.classList.add('selected');
+        playerIcon = this.getAttribute('data-icon'); // Get the selected icon
+        playerIconHTML = this.getAttribute('id') + ".png";
+        document.getElementById('startGameButton').disabled = !playerIcon; // Enable the start button if an icon is selected
+      });
+    });
+
+    document.getElementById('startGameButton').addEventListener('click', () => {
+      playerName = document.getElementById('playerNameInput').value;
+      if (!playerName || !playerIcon) return; // Prevent starting if name or icon is missing
+
+      // Hide start screen
+      document.getElementById('startScreen').style.display = 'none';
+
+      // Create local player
+      myPlayerId = Math.random().toString(36).substring(2, 15); // Unique ID for this player
+      players[myPlayerId] = new Player(myPlayerId, 50, canvas.height - GRASS_HEIGHT - 150, 75, 75, playerIcon, playerName); // Start players higher
+      controllers[myPlayerId] = new Controller(myPlayerId); // Create a controller for this player
+      gameStarted = true;
+
+      // Notify server about new player
+      socket.send(JSON.stringify({ type: 'newPlayer', name: playerName, icon: playerIconHTML, id: myPlayerId }));
+
+      // Set interval for game loop
+      requestAnimationFrame(gameLoop);
+    });
+
+    // Game loop
+    function gameLoop() {
+  if (gameStarted) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear canvas
+
+    // Draw grass at the bottom
+    ctx.fillStyle = 'green';
+    ctx.fillRect(0, canvas.height - GRASS_HEIGHT, canvas.width, GRASS_HEIGHT); // Grass at the bottom
+
+    // Update camera position based on the local player
+    const localPlayer = players[myPlayerId];
+    if (localPlayer) {
+      cameraX = localPlayer.x - canvas.width / 2 + localPlayer.w / 2; // Center camera on the player
+    }
+
+    // Update and draw parkour objects
+    parkourObjects.forEach((obj) => {
+      obj.draw();
+    });
+
+    // Update and draw all players, excluding the local player
+    for (let id in players) {
+      if (id === myPlayerId) continue; // Skip drawing the local player
+
+      let player = players[id];
+      console.log(player);
+      ctx.globalAlpha = player.opacity; // Set opacity for drawing
+          ctx.drawImage(document.getElementById("hawk"), player.x - cameraX, player.y, player.w, player.h);
+
+          // Draw the player's name above the character
+          ctx.fillStyle = 'black';
+          ctx.font = '16px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText(player.name, player.x - cameraX + player.w / 2, player.y - 10); // Positioning the name above the player
+    }
+
+    // Handle local player input and movement
+    if (localPlayer) {
+      localPlayer.speedX = 0; // Reset speed on each frame
+      const controller = controllers[myPlayerId]; // Get the controller for the local player
+
+      // Apply movement based on controller input
+      if (controller.right) { localPlayer.speedX = 7; }
+      if (controller.left) { localPlayer.speedX = -7; }
+      if (controller.up) { localPlayer.jump(); }
+
+      localPlayer.update(parkourObjects); // Update the local player's position
+      localPlayer.draw(); // Draw the local player
+
+      // Send position update to the server
+      socket.send(JSON.stringify({ type: 'positionUpdate', id: myPlayerId, x: localPlayer.x, y: localPlayer.y, name: playerName, icon: playerIconHTML }));
+    }
+
+    requestAnimationFrame(gameLoop);
+  }
+}
+
+
+    // Resize canvas on window resize
+    window.addEventListener('resize', () => {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  // Update the ground height based on new canvas height
+  const groundLevel = canvas.height - GRASS_HEIGHT;
+
+  // Adjust each parkour object's y-position
+  parkourObjects.forEach((obj, index) => {
+    obj.y = groundLevel - (index + 1) * 50; // This is an example; adjust based on your desired layout
+  });
+
+  // Also update the players' positions if needed, to ensure they stay on the ground
+  for (let id in players) {
+    const player = players[id];
+    if (player.y + player.h > groundLevel) {
+      player.y = groundLevel - player.h;
+      player.speedY = 0;
+    }
+  }
+});
+
+  </script>
+</body>
+</html>
