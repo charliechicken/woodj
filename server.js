@@ -1,6 +1,6 @@
 const WebSocket = require('ws');
 
-const server = new WebSocket.Server({ port: 8080 });
+const server = new WebSocket.Server({ port: 3000 });
 const players = {}; // Object to hold connected players
 
 server.on('connection', (socket) => {
